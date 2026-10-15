@@ -32,7 +32,15 @@
 ```
 
 - `text_file` 이 null 이면 본문에 "PDF 본문을 가져오지 못했습니다. '원문' 링크에서 확인하세요."라고만 쓴다.
-- 요약을 Notion 에 올린 뒤 `out/text/` 의 해당 텍스트 파일은 삭제한다(원문을 로컬에 남기지 않는다).
+- 요약을 Notion 에 올린 뒤 `out/text/` 와 `out/figs/<ID>/` 의 해당 파일은 삭제한다(원문을 로컬에 남기지 않는다).
+
+### 2-1) 핵심 도표 선택 (`figures` 가 비어 있지 않은 항목마다)
+각 항목의 `figures` 는 PDF 에서 잘라 둔 도표 후보 PNG 목록이다(`file`, `page`, `caption`, `source`). 이미지를 열어 볼 필요 없이 `caption`/`source` 로 고른다. **최대 3개**만 고른다. 우선순위:
+1. 실적 추이·전망표 (매출, 영업이익, 순이익, 분기/연간)
+2. 밸류에이션 밴드·멀티플(PER/PBR), 목표주가 산정 표
+3. 추정치 변경표, 컨센서스 비교, 부문별 실적
+제외: 투자의견 분류 기준, 컴플라이언스, ESG 평가표, 로고/사진, 단순 주가 차트, 같은 내용이 중복되는 도표.
+고른 도표가 하나도 없으면 도표 섹션은 만들지 않는다. 페이지 전체를 이미지로 올리지 않는다.
 
 ## 3) Notion 반영 (신규가 1건 이상일 때만)
 - Notion 데이터 소스: `collection://006194fd-2af4-4458-b14b-029871b2be16` (DB URL: https://app.notion.com/p/a49dd699a50942d8a673cc9402162902). 먼저 `notion-fetch` 로 스키마를 확인한다.
@@ -53,6 +61,11 @@
 | 목표주가 (number) | `target_price` 에서 쉼표를 제거한 정수 (없으면 생략) |
 | 원문 | 리포트 ID로 자동 계산되는 수식 열이므로 쓰지 않는다 |
 
+- 도표 이미지 올리기 (2-1 에서 고른 도표마다):
+  1. `notion-create-file-upload` 로 `filename` = `<리포트ID>_<번호>.png` 를 만든다. 응답의 `upload_url` 과 `upload_headers` 를 쓴다.
+  2. 셸에서 그 URL 로 파일을 한 번 POST 한다: `curl -s -X POST "<upload_url>" -H "<upload_headers 의 각 헤더>" -F "file=@<도표 file 경로>;type=image/png"`. 응답의 `suggested_markdown`(또는 `markdown_source`)을 얻는다.
+  3. 페이지 content 의 요약 아래에 `## 주요 도표` 섹션을 만들고, 각 도표마다 `suggested_markdown` 한 줄과 그 아래에 `출처: <증권사> (<발간일>) · 원문은 위 '원문' 링크` 한 줄을 쓴다. 이미지의 `caption` 이 있으면 이미지 위에 굵게 쓴다.
+  4. 업로드가 실패한 도표는 건너뛰고 보고에 건수를 적는다. 성공·실패와 관계없이 `out/figs/<ID>/` 는 작업이 끝나면 삭제한다.
 - 중복 방지: 만들기 전에 "리포트 ID"가 이미 있는지 `notion-query-data-sources` 로 확인하고, 있으면 건너뛴다.
 - "종목" 선택지에 없는 종목명이 나오면(`watchlist.json` 에 새 종목이 추가된 경우) `notion-update-data-source` 로 기존 선택지를 모두 유지한 채 그 종목을 선택지에 추가한 뒤 페이지를 만든다.
 - 한 번에 많으면 10건 정도씩 나눠 만든다.

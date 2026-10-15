@@ -12,6 +12,7 @@ import argparse
 import base64
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,7 @@ WATCHLIST = ROOT / "watchlist.json"
 STATE = ROOT / "state.json"
 OUT = ROOT / "out"
 TEXT_DIR = OUT / "text"
+FIG_DIR = OUT / "figs"
 REPORT_URL = BASE + "/Research/PdfViewer?rptId={}"
 PER_PAGE = 50
 
@@ -206,7 +208,99 @@ def edge_session():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def save_text(ctx, rpt_id):
+SOURCE_RE = re.compile(r"^\s*(자료|출처|Source|Sources)\s*[:：]", re.I)
+MAX_FIGS = 12
+
+
+def _merge_rects(rects, gap):
+    import pymupdf
+    rects = [pymupdf.Rect(r.x0 - 0.5, r.y0 - 0.5, r.x1 + 0.5, r.y1 + 0.5) for r in rects]
+    changed = True
+    while changed:
+        changed = False
+        out = []
+        for r in rects:
+            for k, o in enumerate(out):
+                if pymupdf.Rect(o.x0 - gap, o.y0 - gap, o.x1 + gap, o.y1 + gap).intersects(r):
+                    out[k] = o | r
+                    changed = True
+                    break
+            else:
+                out.append(pymupdf.Rect(r))
+        rects = out
+    return rects
+
+
+def _segments(page):
+    """페이지의 텍스트를 같은 줄 안에서 가로 간격 12pt 이하로 이어진 조각 단위로 쪼갠다. (rect, text, font_size)"""
+    import pymupdf
+    segs = []
+    for b in page.get_text("dict")["blocks"]:
+        if b["type"] != 0:
+            continue
+        for ln in b["lines"]:
+            cur = None
+            for sp in ln["spans"]:
+                if not sp["text"].strip():
+                    continue
+                r = pymupdf.Rect(sp["bbox"])
+                if cur and r.x0 - cur[0].x1 <= 12:
+                    cur = (cur[0] | r, cur[1] + sp["text"], max(cur[2], sp["size"]))
+                else:
+                    if cur:
+                        segs.append(cur)
+                    cur = (r, sp["text"], sp["size"])
+            if cur:
+                segs.append(cur)
+    return [(r, " ".join(t.split()), sz) for r, t, sz in segs]
+
+
+def extract_figures(pdf, rpt_id):
+    """PDF 에서 '그래픽 덩어리 + 아래 출처(자료:) 줄'이 있는 도표 후보를 PNG 로 잘라 저장한다.
+    반환: [{file, page, caption, source, w, h}]. 어느 것이 핵심인지는 호출한 에이전트가 caption 으로 판단한다."""
+    import pymupdf
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    outdir = FIG_DIR / str(rpt_id)
+    figs = []
+    for pno, page in enumerate(doc, 1):
+        pr = page.rect
+        rects = [pymupdf.Rect(i["bbox"]) for i in page.get_image_info()]
+        rects += [pymupdf.Rect(d["rect"]) for d in page.get_drawings()]
+        rects = [r for r in rects if r.y0 > pr.height * 0.06 and r.y1 < pr.height * 0.95 and r.get_area() < pr.get_area() * 0.8]
+        segs = _segments(page)
+        sources = [(r, t) for r, t, _ in segs if SOURCE_RE.match(t)]
+        for cl in _merge_rects(rects, gap=8):
+            if cl.width < 120 or cl.height < 70:
+                continue
+            below = [(r, t) for r, t in sources if -10 <= r.y0 - cl.y1 <= 36 and r.x0 < cl.x1 and r.x1 > cl.x0]
+            if not below:
+                continue
+            src_r, src_t = min(below, key=lambda s: abs(s[0].y0 - cl.y1))
+            above = [(r, t, sz) for r, t, sz in segs
+                     if 0 <= cl.y0 - r.y1 <= 40 and len(t) <= 90 and not SOURCE_RE.match(t)
+                     and min(r.x1, cl.x1) - max(r.x0, cl.x0) > 0.4 * r.width]
+            title_r, title_t = (None, "")
+            if above:
+                best = max(above, key=lambda a: (round(a[2]), a[0].y1))
+                title_r, title_t = best[0], best[1]
+            top = min(cl.y0, title_r.y0) if title_r else cl.y0
+            clip = pymupdf.Rect(min(cl.x0, src_r.x0) - 4, top - 4, max(cl.x1, src_r.x1) + 4, src_r.y1 + 4).intersect(pr)
+            if clip.width < 140 or clip.height < 90:
+                continue
+            figs.append((pno, clip, title_t, src_t))
+    figs.sort(key=lambda f: (f[0], f[1].y0, f[1].x0))
+    result = []
+    if figs:
+        outdir.mkdir(parents=True, exist_ok=True)
+    for n, (pno, clip, title, src) in enumerate(figs[:MAX_FIGS], 1):
+        fp = outdir / f"{n:02d}_p{pno}.png"
+        doc[pno - 1].get_pixmap(clip=clip, dpi=150).save(str(fp))
+        result.append({"file": str(fp), "page": pno, "caption": title, "source": src,
+                       "w": round(clip.width), "h": round(clip.height)})
+    return result
+
+
+def save_text(ctx, rpt_id, with_figs=True):
     from pypdf import PdfReader
     page = ctx.new_page()
     try:
@@ -221,26 +315,35 @@ def save_text(ctx, rpt_id):
     TEXT_DIR.mkdir(parents=True, exist_ok=True)
     path = TEXT_DIR / f"{rpt_id}.txt"
     path.write_text(text, encoding="utf-8")
-    return path
+    figs = []
+    if with_figs:
+        try:
+            figs = extract_figures(pdf, rpt_id)
+        except Exception as e:
+            print(f"[경고] 리포트 {rpt_id} 도표 추출 실패: {e}")
+    return path, figs
 
 
-def try_save_text(ctx, rpt_id):
+def try_save_text(ctx, rpt_id, with_figs=True):
     try:
-        path = save_text(ctx, rpt_id)
+        path, figs = save_text(ctx, rpt_id, with_figs)
         time.sleep(2)
-        return str(path)
+        return str(path), figs
     except Exception as e:
         print(f"[경고] 리포트 {rpt_id} 본문 추출 실패: {e}")
-        return None
+        return None, []
 
 
-def extract_texts(ids):
+def extract_texts(ids, with_figs=True):
     with edge_session() as ctx:
         for rpt_id in ids:
-            print(rpt_id, try_save_text(ctx, rpt_id))
+            path, figs = try_save_text(ctx, rpt_id, with_figs)
+            print(rpt_id, path, f"도표 {len(figs)}개")
+            for f in figs:
+                print("   ", f["page"], f["caption"][:50], "|", f["file"])
 
 
-def fetch(days, include_seen, with_text=True):
+def fetch(days, include_seen, with_text=True, with_figs=True):
     watch = json.loads(WATCHLIST.read_text(encoding="utf-8"))
     seen = set(json.loads(STATE.read_text())) if STATE.exists() else set()
     to = date.today()
@@ -256,7 +359,7 @@ def fetch(days, include_seen, with_text=True):
                     items.append(normalize(r, stock))
         if with_text:
             for i in items:
-                i["text_file"] = try_save_text(ctx, i["id"])
+                i["text_file"], i["figures"] = try_save_text(ctx, i["id"], with_figs)
     items.sort(key=lambda x: (x["stock"], x["date"]), reverse=False)
     OUT.mkdir(exist_ok=True)
     (OUT / "new_reports.json").write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -270,6 +373,7 @@ if __name__ == "__main__":
     ap.add_argument("cmd", choices=["login", "fetch", "setcred", "text"])
     ap.add_argument("ids", nargs="*", type=int, help="text: 본문을 추출할 리포트 ID")
     ap.add_argument("--no-text", action="store_true", help="fetch: PDF 본문 추출 생략")
+    ap.add_argument("--no-figs", action="store_true", help="fetch/text: 도표 이미지 추출 생략")
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--auto", action="store_true", help="login: 저장된 자격 증명으로 자동 로그인")
@@ -279,5 +383,5 @@ if __name__ == "__main__":
         from datetime import datetime
         sys.stdout = sys.stderr = open(a.log, "a", encoding="utf-8", buffering=1)
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {a.cmd}")
-    {"login": lambda: login(a.auto), "setcred": set_credentials, "fetch": lambda: fetch(a.days, a.all, not a.no_text),
-     "text": lambda: extract_texts(a.ids)}[a.cmd]()
+    {"login": lambda: login(a.auto), "setcred": set_credentials, "fetch": lambda: fetch(a.days, a.all, not a.no_text, not a.no_figs),
+     "text": lambda: extract_texts(a.ids, not a.no_figs)}[a.cmd]()
