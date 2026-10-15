@@ -357,6 +357,7 @@ def fetch(days, include_seen, with_text=True, with_figs=True):
             for r in search(page, stock["name"], stock["code"], fmt(frm), fmt(to)):
                 if include_seen or r["RPT_ID"] not in seen:
                     items.append(normalize(r, stock))
+            time.sleep(2)
         if with_text:
             for i in items:
                 i["text_file"], i["figures"] = try_save_text(ctx, i["id"], with_figs)
