@@ -9,7 +9,7 @@ FnGuide에서 지정한 종목의 신규 리포트를 매일 아침 수집하고
          └─ fnguide_reports.py login --auto
             (Edge 자동 로그인 → auth_state.json 에 세션 저장)
 
-08:01  Claude 예약 작업
+07:32  Claude 예약 작업
          └─ 로그인된 브라우저 세션으로 신규 리포트 수집
          └─ 이미 저장된 리포트는 중복으로 건너뜀
          └─ 요약 후 Notion DB에 추가, 결과 알림
@@ -77,7 +77,7 @@ C:\fnguide
 | 자동 로그인 실패 | `out\login.log`의 메시지, `out\login_fail.png` 스크린샷 확인 |
 | 비밀번호 오류 | `setcred`를 다시 실행해 저장 |
 | 이전 Edge가 남아 로그인이 꼬임 | 이 프로젝트 프로필의 Edge 프로세스만 종료 후 재실행 (CLAUDE.md의 명령 참고) |
-| 수집 중 세션이 끊김 | 07:30~08:10에 다른 곳에서 FnGuide에 접속했는지 확인 |
+| 수집 중 세션이 끊김 | 07:30~07:50에 다른 곳에서 FnGuide에 접속했는지 확인 |
 | 리포트가 안 들어옴 | PC 전원/Claude 앱 실행 여부, `login.log` 확인 |
 
 ## 보안 주의
