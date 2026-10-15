@@ -1,0 +1,37 @@
+# 비밀정보 / 환경변수
+.env
+.env.*
+*.env
+
+# 로그인 세션 및 자격증명
+auth_state.json
+auth_ua.txt
+credentials*
+*.cred
+*.key
+*.pem
+*.token
+secrets*
+
+# 브라우저 프로필 (쿠키/세션 포함)
+.browser_profile/
+.browser_profile_cdp/
+
+# 실행 결과, 로그, 스크린샷
+out/
+*.log
+
+# 로컬 실행 상태
+state.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 에디터 / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
