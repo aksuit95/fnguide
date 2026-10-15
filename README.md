@@ -5,7 +5,7 @@ FnGuide에서 지정한 종목의 신규 리포트를 매일 아침 수집하고
 ## 동작 방식
 
 ```
-07:55  Windows 작업 스케줄러 "FnGuide Login"
+07:30  Windows 작업 스케줄러 "FnGuide Login"
          └─ fnguide_reports.py login --auto
             (Edge 자동 로그인 → auth_state.json 에 세션 저장)
 
@@ -64,9 +64,9 @@ C:\fnguide
    python fnguide_reports.py fetch --days 7        # 신규 리포트만
    python fnguide_reports.py fetch --days 7 --all  # 이미 본 리포트(state.json)도 포함
    ```
-5. 작업 스케줄러에 매일 07:55 로그인을 등록합니다.
+5. 작업 스케줄러에 매일 07:30 로그인을 등록합니다.
    ```powershell
-   schtasks /Create /TN "FnGuide Login" /SC DAILY /ST 07:55 /TR "cmd /c cd /d C:\fnguide && C:\Users\CHECK\AppData\Local\Programs\Python\Python310\python.exe fnguide_reports.py login --auto >> C:\fnguide\out\login.log 2>&1" /F
+   schtasks /Create /TN "FnGuide Login" /SC DAILY /ST 07:30 /TR "cmd /c cd /d C:\fnguide && C:\Users\CHECK\AppData\Local\Programs\Python\Python310\python.exe fnguide_reports.py login --auto >> C:\fnguide\out\login.log 2>&1" /F
    ```
 6. Notion Integration을 만들고, 대상 데이터베이스에 연결합니다.
 
@@ -77,7 +77,7 @@ C:\fnguide
 | 자동 로그인 실패 | `out\login.log`의 메시지, `out\login_fail.png` 스크린샷 확인 |
 | 비밀번호 오류 | `setcred`를 다시 실행해 저장 |
 | 이전 Edge가 남아 로그인이 꼬임 | 이 프로젝트 프로필의 Edge 프로세스만 종료 후 재실행 (CLAUDE.md의 명령 참고) |
-| 수집 중 세션이 끊김 | 07:55~08:05에 다른 곳에서 FnGuide에 접속했는지 확인 |
+| 수집 중 세션이 끊김 | 07:30~08:10에 다른 곳에서 FnGuide에 접속했는지 확인 |
 | 리포트가 안 들어옴 | PC 전원/Claude 앱 실행 여부, `login.log` 확인 |
 
 ## 보안 주의
