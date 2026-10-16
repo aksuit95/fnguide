@@ -35,6 +35,9 @@ STATE = ROOT / "state.json"
 OUT = ROOT / "out"
 TEXT_DIR = OUT / "text"
 FIG_DIR = OUT / "figs"
+PAGE_DIR = OUT / "pages"
+MIN_TEXT_CHARS = 600
+MAX_PAGE_IMAGES = 12
 REPORT_URL = BASE + "/Research/PdfViewer?rptId={}"
 PER_PAGE = 50
 
@@ -255,6 +258,27 @@ def _segments(page):
     return [(r, " ".join(t.split()), sz) for r, t, sz in segs]
 
 
+def text_is_poor(text):
+    """한글/영문 단어 글자 수가 너무 적으면 이미지 위주 PDF 로 본다."""
+    return len("".join(re.findall(r"[가-힣A-Za-z]{2,}", text))) < MIN_TEXT_CHARS
+
+
+def render_pages(pdf, rpt_id, dpi=100):
+    """텍스트가 거의 없는 PDF 의 페이지를 PNG 로 렌더링한다(요약용 임시 파일, 요약 후 삭제)."""
+    import pymupdf
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    outdir = PAGE_DIR / str(rpt_id)
+    outdir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for n, page in enumerate(doc, 1):
+        if n > MAX_PAGE_IMAGES:
+            break
+        fp = outdir / f"p{n:02d}.png"
+        page.get_pixmap(dpi=dpi).save(str(fp))
+        files.append(str(fp))
+    return files
+
+
 def extract_figures(pdf, rpt_id):
     """PDF 에서 '그래픽 덩어리 + 아래 출처(자료:) 줄'이 있는 도표 후보를 PNG 로 잘라 저장한다.
     반환: [{file, page, caption, source, w, h}]. 어느 것이 핵심인지는 호출한 에이전트가 caption 으로 판단한다."""
@@ -315,30 +339,35 @@ def save_text(ctx, rpt_id, with_figs=True):
     TEXT_DIR.mkdir(parents=True, exist_ok=True)
     path = TEXT_DIR / f"{rpt_id}.txt"
     path.write_text(text, encoding="utf-8")
-    figs = []
+    figs, pages = [], []
     if with_figs:
         try:
             figs = extract_figures(pdf, rpt_id)
         except Exception as e:
             print(f"[경고] 리포트 {rpt_id} 도표 추출 실패: {e}")
-    return path, figs
+    if text_is_poor(text):
+        try:
+            pages = render_pages(pdf, rpt_id)
+        except Exception as e:
+            print(f"[경고] 리포트 {rpt_id} 페이지 렌더링 실패: {e}")
+    return path, figs, pages
 
 
 def try_save_text(ctx, rpt_id, with_figs=True):
     try:
-        path, figs = save_text(ctx, rpt_id, with_figs)
+        path, figs, pages = save_text(ctx, rpt_id, with_figs)
         time.sleep(2)
-        return str(path), figs
+        return str(path), figs, pages
     except Exception as e:
         print(f"[경고] 리포트 {rpt_id} 본문 추출 실패: {e}")
-        return None, []
+        return None, [], []
 
 
 def extract_texts(ids, with_figs=True):
     with edge_session() as ctx:
         for rpt_id in ids:
-            path, figs = try_save_text(ctx, rpt_id, with_figs)
-            print(rpt_id, path, f"도표 {len(figs)}개")
+            path, figs, pages = try_save_text(ctx, rpt_id, with_figs)
+            print(rpt_id, path, f"도표 {len(figs)}개", f"페이지 이미지 {len(pages)}장(텍스트 부족)" if pages else "")
             for f in figs:
                 print("   ", f["page"], f["caption"][:50], "|", f["file"])
 
@@ -360,7 +389,7 @@ def fetch(days, include_seen, with_text=True, with_figs=True):
             time.sleep(2)
         if with_text:
             for i in items:
-                i["text_file"], i["figures"] = try_save_text(ctx, i["id"], with_figs)
+                i["text_file"], i["figures"], i["page_images"] = try_save_text(ctx, i["id"], with_figs)
     items.sort(key=lambda x: (x["stock"], x["date"]), reverse=False)
     OUT.mkdir(exist_ok=True)
     (OUT / "new_reports.json").write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
